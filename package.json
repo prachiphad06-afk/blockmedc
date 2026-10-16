@@ -1,0 +1,17 @@
+{
+  "name": "blockmedc",
+  "version": "1.0.0",
+  "description": "BlockMEDC - Blockchain smart contracts system for securing Moroccan higher education digital certificates",
+  "scripts": {
+    "compile": "hardhat compile",
+    "test": "hardhat test",
+    "node": "hardhat node",
+    "deploy:local": "hardhat run scripts/deploy.js --network localhost",
+    "verify:cert": "hardhat run scripts/verify.js --network localhost"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/contracts": "^5.0.2",
+    "hardhat": "^2.22.0"
+  }
+}

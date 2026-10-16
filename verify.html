@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlockMEDC – Verify a diploma</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600&family=IBM+Plex+Sans:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/ethers@6.13.4/dist/ethers.umd.min.js"></script>
+<style>
+:root{--paper:#F4F6F3;--card:#fff;--ink:#15221B;--muted:#5B6B62;--line:#D5DCD6;--green:#0E6B4A;--red:#B3261E;--grey:#6B756F;box-sizing:border-box}
+*,*::before,*::after{box-sizing:inherit}
+html{background:var(--paper);color:var(--ink);font-family:"IBM Plex Sans",system-ui,sans-serif;line-height:1.5}
+body{margin:0;padding:48px 20px 80px}
+main{max-width:680px;margin:0 auto}
+h1{font-family:Fraunces,Georgia,serif;font-size:clamp(2rem,6vw,3rem);line-height:1.1;margin:0 0 12px}
+.lead{color:var(--muted);margin:0 0 32px;max-width:52ch}
+.drop{display:block;border:2px dashed var(--green);border-radius:6px;padding:40px 20px;text-align:center;background:var(--card);cursor:pointer}
+.drop:hover,.drop.over,.drop:focus-within{background:#E8F1EC}
+.drop strong{display:block;font-size:1.15rem;margin-bottom:4px}
+.drop span{color:var(--muted);font-size:.95rem}
+.drop input{position:absolute;opacity:0;width:1px;height:1px}
+.or{margin:20px 0 8px;color:var(--muted);font-size:.95rem}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+input[type=text]{flex:1 1 260px;font:inherit;padding:10px 12px;border:1px solid var(--line);border-radius:4px;background:var(--card);color:var(--ink);min-width:0}
+button{font:inherit;font-weight:600;padding:10px 20px;border:0;border-radius:4px;background:var(--green);color:#fff;cursor:pointer}
+button:hover{background:#0A5439}
+:focus-visible{outline:3px solid #1B8A63;outline-offset:2px}
+#hash{font-family:ui-monospace,Consolas,monospace;font-size:.85rem;word-break:break-all;color:var(--muted);margin:20px 0 0}
+#result{margin-top:28px;background:var(--card);border:1px solid var(--line);border-radius:6px;padding:28px;display:none}
+.head{display:flex;gap:24px;align-items:center;flex-wrap:wrap}
+.stamp{flex:none;width:132px;height:132px;border-radius:50%;border:4px double currentColor;display:grid;place-items:center;text-align:center;font-family:Fraunces,Georgia,serif;font-size:1.3rem;line-height:1.15;transform:rotate(-8deg);animation:stamp .35s cubic-bezier(.2,1.4,.4,1)}
+@keyframes stamp{from{transform:rotate(-8deg) scale(1.6);opacity:0}}
+@media (prefers-reduced-motion:reduce){.stamp{animation:none}}
+.valid{color:var(--green)}.revoked{color:var(--red)}.none{color:var(--grey)}
+.head p{margin:0;flex:1 1 220px}
+.head p b{display:block;font-size:1.2rem}
+dl{display:grid;grid-template-columns:max-content 1fr;gap:8px 24px;margin:24px 0 0;padding-top:20px;border-top:1px solid var(--line)}
+dt{color:var(--muted)}dd{margin:0;font-weight:600;overflow-wrap:anywhere}
+details{margin-top:40px;color:var(--muted);font-size:.95rem}
+summary{cursor:pointer;font-weight:600;color:var(--ink)}
+details label{display:block;margin:12px 0 4px}
+details input{width:100%}
+.err{color:var(--red);margin-top:20px;display:none}
+</style>
+</head>
+<body>
+<main>
+  <h1>Check a Moroccan higher-education diploma</h1>
+  <p class="lead">Drop the diploma PDF you received. The page computes its fingerprint in your browser and asks the BlockMEDC smart contract whether a university issued it. The file is never uploaded.</p>
+
+  <label class="drop" id="drop">
+    <strong>Drop the diploma PDF here</strong>
+    <span>or click to choose a file</span>
+    <input type="file" id="file">
+  </label>
+
+  <p class="or">Already have the fingerprint (hash)?</p>
+  <div class="row">
+    <input type="text" id="hashIn" placeholder="0x…" aria-label="Certificate hash">
+    <button id="go">Verify hash</button>
+  </div>
+
+  <p id="hash"></p>
+  <p class="err" id="err" role="alert"></p>
+
+  <section id="result" aria-live="polite">
+    <div class="head">
+      <div class="stamp" id="stamp"></div>
+      <p><b id="title"></b><span id="sub"></span></p>
+    </div>
+    <dl id="rows"></dl>
+  </section>
+
+  <details>
+    <summary>Connection settings</summary>
+    <label for="rpc">Blockchain node (RPC URL)</label>
+    <input type="text" id="rpc" value="http://127.0.0.1:8545">
+    <label for="addr">BlockMEDC contract address</label>
+    <input type="text" id="addr" value="0x5FbDB2315678afecb367f032d93F642f64180aa3">
+  </details>
+</main>
+
+<script>
+const ABI = ["function verifyCertificate(bytes32) view returns (bool exists, bool valid, string institutionName, tuple(bytes32 studentIdHash, address institution, string degree, string field, string honors, uint64 graduationDate, uint64 issuedAt, bool revoked, uint64 revokedAt, string revokeReason) cert)"];
+const $ = id => document.getElementById(id);
+
+try { for (const k of ["rpc","addr"]) { const v = localStorage.getItem("blockmedc_"+k); if (v) $(k).value = v; } } catch(e){}
+
+const fmt = ts => new Date(Number(ts) * 1000).toLocaleDateString("en-GB", {day:"numeric", month:"long", year:"numeric"});
+
+function showError(msg){ $("result").style.display = "none"; $("err").textContent = msg; $("err").style.display = "block"; }
+
+async function verify(hash){
+  $("err").style.display = "none";
+  $("hash").textContent = "Fingerprint: " + hash;
+  const rpc = $("rpc").value.trim(), addr = $("addr").value.trim();
+  try { localStorage.setItem("blockmedc_rpc", rpc); localStorage.setItem("blockmedc_addr", addr); } catch(e){}
+  let res;
+  try {
+    const provider = new ethers.JsonRpcProvider(rpc, undefined, {staticNetwork: true});
+    res = await new ethers.Contract(addr, ABI, provider).verifyCertificate(hash);
+  } catch (e) {
+    if (e.code === "BAD_DATA") return showError("No BlockMEDC contract found at that address. If you restarted the Hardhat node, run npm run deploy:local again and paste the new address in Connection settings.");
+    return showError("Cannot reach the blockchain node at " + rpc + ". Check that npx hardhat node is still running.");
+  }
+  const [exists, valid, inst, c] = res;
+  const st = $("stamp"), rows = $("rows");
+  rows.textContent = "";
+  const add = (k, v) => { const dt = document.createElement("dt"), dd = document.createElement("dd"); dt.textContent = k; dd.textContent = v; rows.append(dt, dd); };
+
+  if (!exists) {
+    st.className = "stamp none"; st.textContent = "Not found";
+    $("title").textContent = "No matching certificate";
+    $("sub").textContent = "No university issued a diploma with this fingerprint. The file may have been altered, or it is not a BlockMEDC certificate.";
+  } else if (c.revoked) {
+    st.className = "stamp revoked"; st.textContent = "Revoked";
+    $("title").textContent = "This certificate was cancelled";
+    $("sub").textContent = "It was issued, but the university or the Ministry later revoked it. Do not accept it.";
+  } else {
+    st.className = "stamp valid"; st.textContent = "Authentic";
+    $("title").textContent = "Issued by " + inst;
+    $("sub").textContent = "This exact file matches a certificate recorded on the blockchain.";
+  }
+  if (exists) {
+    add("Institution", inst); add("Degree", c.degree); add("Field", c.field);
+    if (c.honors) add("Honors", c.honors);
+    add("Graduation date", fmt(c.graduationDate)); add("Recorded on chain", fmt(c.issuedAt));
+    add("Issuer address", c.institution);
+    if (c.revoked) { add("Revoked on", fmt(c.revokedAt)); add("Reason", c.revokeReason || "Not given"); }
+  }
+  $("result").style.display = "block";
+  $("result").scrollIntoView({behavior: "smooth", block: "nearest"});
+}
+
+async function onFile(f){
+  if (!f) return;
+  const bytes = new Uint8Array(await f.arrayBuffer());
+  verify(ethers.keccak256(bytes));
+}
+
+$("file").addEventListener("change", e => onFile(e.target.files[0]));
+const drop = $("drop");
+["dragenter","dragover"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave","drop"].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => onFile(e.dataTransfer.files[0]));
+$("go").addEventListener("click", () => {
+  const h = $("hashIn").value.trim();
+  if (!/^0x[0-9a-fA-F]{64}$/.test(h)) return showError("A hash starts with 0x and has 64 more characters (letters a-f and digits).");
+  verify(h);
+});
+</script>
+</body>
+</html>
